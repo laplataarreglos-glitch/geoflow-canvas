@@ -11,7 +11,7 @@ export const nodeRegistry: NodeDefinition[] = [
     description: 'Load GeoJSON, Shapefile, GeoPackage, CSV with geometry',
     inputs: [],
     outputs: ['features'],
-    defaultConfig: { format: 'auto' },
+    defaultConfig: { format: 'auto', fileName: '' },
   },
   {
     type: 'urlInput',
@@ -21,7 +21,7 @@ export const nodeRegistry: NodeDefinition[] = [
     description: 'Fetch data from URL, WMS, WFS, or REST API',
     inputs: [],
     outputs: ['features'],
-    defaultConfig: { url: '', method: 'GET' },
+    defaultConfig: { url: '', method: 'GET', headers: {} },
   },
   {
     type: 'databaseInput',
@@ -31,7 +31,7 @@ export const nodeRegistry: NodeDefinition[] = [
     description: 'Connect to PostGIS or Supabase database',
     inputs: [],
     outputs: ['features'],
-    defaultConfig: { connection: '', query: '' },
+    defaultConfig: { connection: '', query: '', table: '' },
   },
 
   // Transform nodes
@@ -157,7 +157,7 @@ export const nodeRegistry: NodeDefinition[] = [
     description: 'Filter features by attribute or spatial condition',
     inputs: ['features'],
     outputs: ['features'],
-    defaultConfig: { expression: '' },
+    defaultConfig: { expression: '', property: '', operator: '==', value: '' },
   },
   {
     type: 'join',
@@ -177,7 +177,7 @@ export const nodeRegistry: NodeDefinition[] = [
     description: 'Aggregate features by attribute',
     inputs: ['features'],
     outputs: ['features'],
-    defaultConfig: { groupField: '', aggregations: [] },
+    defaultConfig: { groupField: '', aggregation: 'count' },
   },
 
   // Calculation nodes
@@ -200,6 +200,21 @@ export const nodeRegistry: NodeDefinition[] = [
     inputs: ['features'],
     outputs: ['features'],
     defaultConfig: { units: 'square-kilometers' },
+  },
+
+  // Custom code node
+  {
+    type: 'customCode',
+    label: 'Custom Code',
+    category: 'data',
+    icon: 'Code',
+    description: 'Write custom JavaScript or Python-like code',
+    inputs: ['features'],
+    outputs: ['features'],
+    defaultConfig: { 
+      code: '// Transform features using turf.js\nreturn { type: "FeatureCollection", features: features };',
+      language: 'javascript'
+    },
   },
 
   // Output nodes
@@ -231,7 +246,7 @@ export const nodeRegistry: NodeDefinition[] = [
     description: 'Visualize on interactive map',
     inputs: ['features'],
     outputs: [],
-    defaultConfig: {},
+    defaultConfig: { showAttributes: true, style: 'default' },
   },
 ];
 
