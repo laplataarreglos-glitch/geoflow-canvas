@@ -14,9 +14,11 @@ import {
   ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { FeatureCollection } from 'geojson';
 
 import { GeoNode, GeoNodeData, GeoEdge } from '@/types/nodes';
 import { getNodeDefinition } from '@/lib/nodeRegistry';
+import { processOperation, executeCustomCode, exportToFormat, ProcessingResult } from '@/lib/geoProcessing';
 import GeoNodeComponent from './GeoNode';
 import { NodePalette } from './NodePalette';
 import { NodeInspector } from './NodeInspector';
@@ -27,90 +29,16 @@ const nodeTypes = {
   geoNode: GeoNodeComponent,
 };
 
-// Sample workflow for demonstration
-const initialNodes: GeoNode[] = [
-  {
-    id: 'input-1',
-    type: 'geoNode',
-    position: { x: 100, y: 150 },
-    data: {
-      label: 'File Input',
-      category: 'input',
-      icon: 'Upload',
-      description: 'Load GeoJSON, Shapefile, GeoPackage, CSV with geometry',
-      inputs: [],
-      outputs: ['features'],
-      preview: {
-        type: 'geojson',
-        featureCount: 1247,
-        geometryType: 'Polygon',
-        crs: 'EPSG:4326',
-      },
-      status: 'success',
-    },
-  },
-  {
-    id: 'buffer-1',
-    type: 'geoNode',
-    position: { x: 400, y: 100 },
-    data: {
-      label: 'Buffer',
-      category: 'geoprocess',
-      icon: 'Circle',
-      description: 'Create buffer zone around geometries',
-      inputs: ['features'],
-      outputs: ['features'],
-      config: { distance: 500, units: 'meters' },
-      preview: {
-        type: 'geojson',
-        featureCount: 1247,
-        geometryType: 'Polygon',
-      },
-      status: 'success',
-    },
-  },
-  {
-    id: 'simplify-1',
-    type: 'geoNode',
-    position: { x: 400, y: 280 },
-    data: {
-      label: 'Simplify',
-      category: 'transform',
-      icon: 'Minimize2',
-      description: 'Reduce geometry complexity with tolerance',
-      inputs: ['features'],
-      outputs: ['features'],
-      config: { tolerance: 0.001 },
-    },
-  },
-  {
-    id: 'output-1',
-    type: 'geoNode',
-    position: { x: 700, y: 180 },
-    data: {
-      label: 'Export File',
-      category: 'output',
-      icon: 'Download',
-      description: 'Export to GeoJSON, Shapefile, GeoPackage',
-      inputs: ['features'],
-      outputs: [],
-      config: { format: 'geojson', filename: 'processed_data' },
-    },
-  },
-];
-
-const initialEdges: GeoEdge[] = [
-  { id: 'e1-2', source: 'input-1', target: 'buffer-1', sourceHandle: 'features', targetHandle: 'features' },
-  { id: 'e1-3', source: 'input-1', target: 'simplify-1', sourceHandle: 'features', targetHandle: 'features' },
-  { id: 'e2-4', source: 'buffer-1', target: 'output-1', sourceHandle: 'features', targetHandle: 'features' },
-];
+// Store node data separately for processing
+type NodeDataStore = Record<string, FeatureCollection>;
 
 const WorkflowCanvasInner = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState<GeoNode>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<GeoEdge>([]);
   const [selectedNode, setSelectedNode] = useState<GeoNode | null>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const [nodeDataStore, setNodeDataStore] = useState<NodeDataStore>({});
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -182,57 +110,277 @@ const WorkflowCanvasInner = () => {
           node.id === nodeId ? { ...node, data: { ...node.data, config } } : node
         )
       );
+      // Update selected node if it's the one being modified
+      setSelectedNode((prev) => 
+        prev?.id === nodeId ? { ...prev, data: { ...prev.data, config } } : prev
+      );
     },
     [setNodes]
   );
 
-  const handleRunNode = useCallback(
-    (nodeId: string) => {
+  const handleUpdateData = useCallback(
+    (nodeId: string, data: FeatureCollection, stats: ProcessingResult['stats']) => {
+      // Store the data
+      setNodeDataStore((prev) => ({ ...prev, [nodeId]: data }));
+      
+      // Update node with preview info
       setNodes((nds) =>
         nds.map((node) =>
-          node.id === nodeId ? { ...node, data: { ...node.data, status: 'running' } } : node
+          node.id === nodeId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: 'success',
+                  preview: {
+                    type: 'geojson',
+                    featureCount: stats?.featureCount,
+                    geometryType: stats?.geometryType,
+                    crs: 'EPSG:4326',
+                  },
+                },
+              }
+            : node
         )
       );
 
-      // Simulate processing
-      setTimeout(() => {
-        setNodes((nds) =>
-          nds.map((node) =>
-            node.id === nodeId
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    status: 'success',
-                    preview: {
-                      type: 'geojson',
-                      featureCount: Math.floor(Math.random() * 1000) + 100,
-                      geometryType: 'Polygon',
-                    },
-                  },
-                }
-              : node
-          )
-        );
-        toast.success('Node processing complete');
-      }, 1500);
+      // Update selected node
+      setSelectedNode((prev) =>
+        prev?.id === nodeId
+          ? {
+              ...prev,
+              data: {
+                ...prev.data,
+                status: 'success',
+                preview: {
+                  type: 'geojson',
+                  featureCount: stats?.featureCount,
+                  geometryType: stats?.geometryType,
+                  crs: 'EPSG:4326',
+                },
+              },
+            }
+          : prev
+      );
+
+      toast.success(`Loaded ${stats?.featureCount} features`);
     },
     [setNodes]
   );
 
-  const handleRunWorkflow = () => {
-    toast.info('Running full workflow...');
-    nodes.forEach((node, index) => {
-      setTimeout(() => {
-        handleRunNode(node.id);
-      }, index * 500);
-    });
-  };
+  // Get input data for a node from connected nodes
+  const getInputData = useCallback((nodeId: string): FeatureCollection | null => {
+    const incomingEdges = edges.filter((e) => e.target === nodeId);
+    if (incomingEdges.length === 0) return null;
+
+    // Get data from first connected source
+    const sourceId = incomingEdges[0].source;
+    return nodeDataStore[sourceId] || null;
+  }, [edges, nodeDataStore]);
+
+  // Get secondary input for operations like intersect, union
+  const getSecondaryInput = useCallback((nodeId: string): FeatureCollection | null => {
+    const incomingEdges = edges.filter((e) => e.target === nodeId);
+    if (incomingEdges.length < 2) return null;
+    const sourceId = incomingEdges[1].source;
+    return nodeDataStore[sourceId] || null;
+  }, [edges, nodeDataStore]);
+
+  const handleRunNode = useCallback(
+    async (nodeId: string) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+
+      const nodeType = node.type === 'geoNode' ? (Object.keys(node.data).find(k => k === 'label') ? 
+        node.id.split('-')[0] : node.type) : node.type;
+      const actualType = node.id.split('-')[0]; // Extract type from id like 'buffer-123456'
+      const config = node.data.config || {};
+
+      // Set running status
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === nodeId ? { ...n, data: { ...n.data, status: 'running', error: undefined } } : n
+        )
+      );
+
+      try {
+        let result: ProcessingResult;
+
+        // Handle input nodes
+        if (actualType === 'fileInput') {
+          // File input is handled by the file upload, just check if we have data
+          if (nodeDataStore[nodeId]) {
+            toast.success('Data already loaded');
+            setNodes((nds) =>
+              nds.map((n) =>
+                n.id === nodeId ? { ...n, data: { ...n.data, status: 'success' } } : n
+              )
+            );
+          } else {
+            toast.error('Please upload a file first');
+            setNodes((nds) =>
+              nds.map((n) =>
+                n.id === nodeId ? { ...n, data: { ...n.data, status: 'error', error: 'No file uploaded' } } : n
+              )
+            );
+          }
+          return;
+        }
+
+        if (actualType === 'urlInput') {
+          const url = config.url as string;
+          if (!url) {
+            throw new Error('Please enter a URL');
+          }
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          
+          // Normalize to FeatureCollection
+          let fc: FeatureCollection;
+          if (data.type === 'FeatureCollection') {
+            fc = data;
+          } else if (data.type === 'Feature') {
+            fc = { type: 'FeatureCollection', features: [data] };
+          } else {
+            throw new Error('Invalid GeoJSON response');
+          }
+
+          handleUpdateData(nodeId, fc, {
+            featureCount: fc.features.length,
+            geometryType: fc.features[0]?.geometry?.type || 'Unknown',
+          });
+          return;
+        }
+
+        // Handle output nodes
+        if (actualType === 'fileOutput') {
+          const inputData = getInputData(nodeId);
+          if (!inputData) {
+            throw new Error('No input data connected');
+          }
+          const filename = (config.filename as string) || 'output';
+          const format = (config.format as string) || 'geojson';
+          exportToFormat(inputData, format, filename);
+          
+          setNodes((nds) =>
+            nds.map((n) =>
+              n.id === nodeId ? { ...n, data: { ...n.data, status: 'success' } } : n
+            )
+          );
+          toast.success(`Exported ${filename}.${format === 'csv' ? 'csv' : 'geojson'}`);
+          return;
+        }
+
+        if (actualType === 'preview') {
+          const inputData = getInputData(nodeId);
+          if (!inputData) {
+            throw new Error('No input data connected');
+          }
+          setNodeDataStore((prev) => ({ ...prev, [nodeId]: inputData }));
+          setNodes((nds) =>
+            nds.map((n) =>
+              n.id === nodeId
+                ? {
+                    ...n,
+                    data: {
+                      ...n.data,
+                      status: 'success',
+                      preview: {
+                        type: 'geojson',
+                        featureCount: inputData.features.length,
+                        geometryType: inputData.features[0]?.geometry?.type,
+                      },
+                    },
+                  }
+                : n
+            )
+          );
+          toast.success('Preview ready');
+          return;
+        }
+
+        // Handle custom code node
+        if (actualType === 'customCode') {
+          const inputData = getInputData(nodeId);
+          if (!inputData) {
+            throw new Error('No input data connected');
+          }
+          const code = config.code as string;
+          const language = (config.language as 'javascript' | 'python-like') || 'javascript';
+          result = executeCustomCode(code, language, inputData);
+        } else {
+          // Handle processing nodes
+          const inputData = getInputData(nodeId);
+          if (!inputData) {
+            throw new Error('No input data connected. Connect an input node first.');
+          }
+
+          const secondaryInput = getSecondaryInput(nodeId);
+          result = processOperation(actualType, inputData, config, secondaryInput || undefined);
+        }
+
+        if (result.success && result.data) {
+          handleUpdateData(nodeId, result.data, result.stats);
+        } else {
+          throw new Error(result.error || 'Processing failed');
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Processing failed';
+        setNodes((nds) =>
+          nds.map((n) =>
+            n.id === nodeId ? { ...n, data: { ...n.data, status: 'error', error: errorMessage } } : n
+          )
+        );
+        setSelectedNode((prev) =>
+          prev?.id === nodeId ? { ...prev, data: { ...prev.data, status: 'error', error: errorMessage } } : prev
+        );
+        toast.error(errorMessage);
+      }
+    },
+    [nodes, edges, nodeDataStore, setNodes, getInputData, getSecondaryInput, handleUpdateData]
+  );
+
+  // Run entire workflow in topological order
+  const handleRunWorkflow = useCallback(async () => {
+    toast.info('Running workflow...');
+
+    // Find input nodes (nodes with no incoming edges)
+    const inputNodeIds = new Set(
+      nodes.filter((n) => !edges.some((e) => e.target === n.id)).map((n) => n.id)
+    );
+
+    // Build dependency graph
+    const visited = new Set<string>();
+    const executionOrder: string[] = [];
+
+    const visit = (nodeId: string) => {
+      if (visited.has(nodeId)) return;
+      visited.add(nodeId);
+
+      // First process all nodes that this node depends on
+      const dependencies = edges.filter((e) => e.target === nodeId).map((e) => e.source);
+      dependencies.forEach(visit);
+
+      executionOrder.push(nodeId);
+    };
+
+    nodes.forEach((n) => visit(n.id));
+
+    // Execute in order with delays
+    for (let i = 0; i < executionOrder.length; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await handleRunNode(executionOrder[i]);
+    }
+
+    toast.success('Workflow complete!');
+  }, [nodes, edges, handleRunNode]);
 
   const handleClearCanvas = () => {
     setNodes([]);
     setEdges([]);
     setSelectedNode(null);
+    setNodeDataStore({});
     toast.success('Canvas cleared');
   };
 
@@ -283,7 +431,9 @@ const WorkflowCanvasInner = () => {
           node={selectedNode}
           onClose={() => setSelectedNode(null)}
           onUpdateConfig={handleUpdateConfig}
+          onUpdateData={handleUpdateData}
           onRunNode={handleRunNode}
+          nodeData={nodeDataStore[selectedNode.id]}
         />
       )}
     </div>
